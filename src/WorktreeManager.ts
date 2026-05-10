@@ -1,7 +1,7 @@
 import { Effect, Option } from "effect";
 import { FileSystem } from "@effect/platform";
 import { execFile } from "node:child_process";
-import { join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { WorktreeError, WorktreeTimeoutError, withTimeout } from "./errors.js";
 
 const WORKTREE_TIMEOUT_MS = 30_000;
@@ -144,6 +144,9 @@ export const create = (
     yield* fs
       .makeDirectory(worktreesDir, { recursive: true })
       .pipe(Effect.mapError((e) => new WorktreeError({ message: e.message })));
+    const realWorktreesDir = yield* fs
+      .realPath(worktreesDir)
+      .pipe(Effect.catchAll(() => Effect.succeed(worktreesDir)));
 
     let branch: string;
     let worktreeName: string;
@@ -163,7 +166,7 @@ export const create = (
       }
     }
 
-    const worktreePath = join(worktreesDir, worktreeName);
+    const worktreePath = join(realWorktreesDir, worktreeName);
 
     if (opts?.branch) {
       // Proactively detect collision before git produces a confusing error.
@@ -175,7 +178,7 @@ export const create = (
         existing.find((wt) => wt.path === worktreePath);
       if (collision) {
         // Only reuse worktrees managed by sandcastle (under .sandcastle/worktrees/)
-        const isManagedWorktree = collision.path.startsWith(worktreesDir);
+        const isManagedWorktree = collision.path.startsWith(realWorktreesDir);
         if (isManagedWorktree) {
           const dirty = yield* hasUncommittedChanges(collision.path);
           if (dirty) {
@@ -284,13 +287,21 @@ export const hasUncommittedChanges = (
  */
 export const remove = (
   worktreePath: string,
-): Effect.Effect<void, WorktreeError> => {
-  // Derive the main repo dir: worktreePath = <repoDir>/.sandcastle/worktrees/<name>
-  const repoDir = join(worktreePath, "..", "..", "..");
-  return execGit(["worktree", "remove", "--force", worktreePath], repoDir).pipe(
+): Effect.Effect<void, WorktreeError> =>
+  execGit(["rev-parse", "--git-common-dir"], worktreePath).pipe(
+    Effect.map((output) => output.trim()),
+    Effect.map((gitCommonDir) =>
+      dirname(
+        gitCommonDir.startsWith("/")
+          ? gitCommonDir
+          : resolve(worktreePath, gitCommonDir),
+      ),
+    ),
+    Effect.flatMap((repoDir) =>
+      execGit(["worktree", "remove", "--force", worktreePath], repoDir),
+    ),
     Effect.asVoid,
   );
-};
 
 /**
  * Prunes stale git worktree metadata and removes orphaned directories under

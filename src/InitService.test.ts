@@ -134,18 +134,18 @@ describe("InitService scaffold", () => {
     {
       agent: claudeCodeAgent,
       expectedKey: "ANTHROPIC_API_KEY=",
-      unexpectedKey: "OPENAI_KEY=",
+      unexpectedKey: "OPENAI_API_KEY=",
       expectIssue191Link: true,
     },
     {
       agent: piAgent,
       expectedKey: "ANTHROPIC_API_KEY=",
-      unexpectedKey: "OPENAI_KEY=",
+      unexpectedKey: "OPENAI_API_KEY=",
       expectIssue191Link: false,
     },
     {
       agent: codexAgent,
-      expectedKey: "OPENAI_KEY=",
+      expectedKey: "OPENAI_API_KEY=",
       unexpectedKey: "ANTHROPIC_API_KEY=",
       expectIssue191Link: false,
     },
@@ -703,6 +703,8 @@ describe("InitService scaffold", () => {
       "utf-8",
     );
     expect(mainTs).toContain('codex("gpt-5.4-mini")');
+    expect(mainTs).toContain("codexCliMounts");
+    expect(mainTs).toContain("sandbox: docker({ mounts: codexCliMounts() })");
     expect(mainTs).not.toContain("claudeCode");
   });
 

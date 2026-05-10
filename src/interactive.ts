@@ -341,9 +341,22 @@ export const interactive = async (
       const sandboxLayer = makeSandboxLayerFromHandle(handle);
       const worktreePath = handle.worktreePath;
 
+      let lastSyncedSandboxHead: string | undefined;
       const applyToHost =
         sandboxProvider.tag === "isolated" && worktreeInfo
-          ? () => syncOut(worktreeInfo!.path, handle as IsolatedSandboxHandle)
+          ? () =>
+              syncOut(
+                worktreeInfo.path,
+                handle as IsolatedSandboxHandle,
+                lastSyncedSandboxHead,
+              ).pipe(
+                Effect.tap((sandboxHead) =>
+                  Effect.sync(() => {
+                    lastSyncedSandboxHead = sandboxHead;
+                  }),
+                ),
+                Effect.asVoid,
+              )
           : () => Effect.void; // bind-mount and no-sandbox don't need sync
 
       const lifecycleEffect = withSandboxLifecycle(

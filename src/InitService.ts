@@ -217,7 +217,8 @@ ANTHROPIC_API_KEY=`,
     factoryImport: "codex",
     dockerfileTemplate: CODEX_DOCKERFILE,
     envExample: `# OpenAI API key
-OPENAI_KEY=`,
+# Optional if you authenticate with \`codex --login\` and mount host ~/.codex into the sandbox
+OPENAI_API_KEY=`,
   },
   {
     name: "opencode",
@@ -489,6 +490,36 @@ const rewriteMainTs = (
       factoryCallRe,
       `${agent.factoryImport}("${model}")`,
     );
+
+    if (agent.name === "codex") {
+      if (
+        content.includes('import * as sandcastle from "@ai-hero/sandcastle";')
+      ) {
+        content = content.replace(
+          'import * as sandcastle from "@ai-hero/sandcastle";',
+          'import { codexCliMounts } from "@ai-hero/sandcastle";\nimport * as sandcastle from "@ai-hero/sandcastle";',
+        );
+      } else {
+        content = content.replace(
+          /import \{([^}]+)\} from "@ai-hero\/sandcastle";/,
+          (_match, imports: string) => {
+            const importList = imports
+              .split(",")
+              .map((entry) => entry.trim())
+              .filter(Boolean);
+            if (!importList.includes("codexCliMounts")) {
+              importList.push("codexCliMounts");
+            }
+            return `import { ${importList.join(", ")} } from "@ai-hero/sandcastle";`;
+          },
+        );
+      }
+
+      content = content.replace(
+        /sandbox:\s*(docker|podman)\(\)/g,
+        "sandbox: $1({ mounts: codexCliMounts() })",
+      );
+    }
 
     yield* fs
       .writeFileString(mainTsPath, content)

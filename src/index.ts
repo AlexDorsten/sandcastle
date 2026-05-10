@@ -44,6 +44,8 @@ export {
 } from "./SessionPaths.js";
 export type { SandboxHooks } from "./SandboxLifecycle.js";
 export type { MountConfig } from "./MountConfig.js";
+export { codexCliMounts } from "./codexCliMounts.js";
+export type { CodexCliMountsOptions } from "./codexCliMounts.js";
 export { Output, StructuredOutputError } from "./Output.js";
 export type {
   OutputDefinition,
@@ -51,13 +53,20 @@ export type {
   OutputStringDefinition,
 } from "./Output.js";
 export { CwdError } from "./resolveCwd.js";
-export { claudeCode, codex, opencode, pi } from "./AgentProvider.js";
+export {
+  claudeCode,
+  codex,
+  codexAppServer,
+  opencode,
+  pi,
+} from "./AgentProvider.js";
 export type {
   AgentProvider,
   AgentCommandOptions,
   PrintCommand,
   ClaudeCodeOptions,
   CodexOptions,
+  CodexAppServerOptions,
   OpenCodeOptions,
   PiOptions,
 } from "./AgentProvider.js";

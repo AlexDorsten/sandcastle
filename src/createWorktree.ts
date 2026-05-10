@@ -20,12 +20,12 @@ import {
 } from "./SandboxLifecycle.js";
 import type {
   AnySandboxProvider,
-  SandboxProvider,
   MergeToHeadBranchStrategy,
   NamedBranchStrategy,
   BindMountSandboxHandle,
   IsolatedSandboxHandle,
   NoSandboxHandle,
+  SandboxProvider,
 } from "./SandboxProvider.js";
 import type { CloseResult, Sandbox } from "./createSandbox.js";
 import { createSandboxFromWorktree } from "./createSandbox.js";
@@ -116,8 +116,8 @@ export interface WorktreeInteractiveOptions {
 export interface WorktreeRunOptions {
   /** Agent provider to use (e.g. claudeCode("claude-opus-4-6")) */
   readonly agent: AgentProvider;
-  /** Sandbox provider (e.g. docker()). Required — AFK agents should always be sandboxed. */
-  readonly sandbox: SandboxProvider;
+  /** Sandbox provider (e.g. docker(), noSandbox()). Required. */
+  readonly sandbox: AnySandboxProvider;
   /** Inline prompt string (mutually exclusive with promptFile). */
   readonly prompt?: string;
   /** Path to a prompt file (mutually exclusive with prompt). */
@@ -189,7 +189,7 @@ export interface Worktree {
   readonly branch: string;
   /** Host path to the worktree (worktree). */
   readonly worktreePath: string;
-  /** Run an AFK agent in this worktree with a required sandbox. */
+  /** Run an AFK agent in this worktree. */
   run(options: WorktreeRunOptions): Promise<WorktreeRunResult>;
   /** Run an interactive agent session in this worktree. */
   interactive(options: WorktreeInteractiveOptions): Promise<InteractiveResult>;
@@ -231,7 +231,12 @@ export const createWorktree = async (
       baseBranch,
     });
     if (options.copyToWorktree && options.copyToWorktree.length > 0) {
-      yield* copyToWorktree(options.copyToWorktree, hostRepoDir, info.path, options.timeouts?.copyToWorktreeMs);
+      yield* copyToWorktree(
+        options.copyToWorktree,
+        hostRepoDir,
+        info.path,
+        options.timeouts?.copyToWorktreeMs,
+      );
     }
     // Run host.onWorktreeReady hooks after copyToWorktree, before sandbox creation
     if (options.hooks?.host?.onWorktreeReady?.length) {
@@ -378,9 +383,22 @@ export const createWorktree = async (
         const sandboxLayer = makeSandboxLayerFromHandle(handle);
         const worktreePath = handle.worktreePath;
 
+        let lastSyncedSandboxHead: string | undefined;
         const applyToHost =
           resolvedSandbox.tag === "isolated"
-            ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
+            ? () =>
+                syncOut(
+                  worktreeInfo.path,
+                  handle as IsolatedSandboxHandle,
+                  lastSyncedSandboxHead,
+                ).pipe(
+                  Effect.tap((sandboxHead) =>
+                    Effect.sync(() => {
+                      lastSyncedSandboxHead = sandboxHead;
+                    }),
+                  ),
+                  Effect.asVoid,
+                )
             : () => Effect.void;
 
         const lifecycleEffect = withSandboxLifecycle(
@@ -528,10 +546,21 @@ export const createWorktree = async (
       }
 
       // 4. Start sandbox
-      let handle: BindMountSandboxHandle | IsolatedSandboxHandle;
+      let handle:
+        | BindMountSandboxHandle
+        | IsolatedSandboxHandle
+        | NoSandboxHandle;
       let sandboxRepoDir: string;
 
-      if (sandboxProvider.tag === "isolated") {
+      if (sandboxProvider.tag === "none") {
+        handle = yield* Effect.promise(() =>
+          sandboxProvider.create({
+            worktreePath: worktreeInfo.path,
+            env: effectiveEnv,
+          }),
+        );
+        sandboxRepoDir = handle.worktreePath;
+      } else if (sandboxProvider.tag === "isolated") {
         const startResult = yield* startSandbox({
           provider: sandboxProvider,
           hostRepoDir: worktreeInfo.path,
@@ -555,9 +584,22 @@ export const createWorktree = async (
       }
 
       const sandboxLayer = makeSandboxLayerFromHandle(handle);
+      let lastSyncedSandboxHead: string | undefined;
       const applyToHost =
         sandboxProvider.tag === "isolated"
-          ? () => syncOut(worktreeInfo.path, handle as IsolatedSandboxHandle)
+          ? () =>
+              syncOut(
+                worktreeInfo.path,
+                handle as IsolatedSandboxHandle,
+                lastSyncedSandboxHead,
+              ).pipe(
+                Effect.tap((sandboxHead) =>
+                  Effect.sync(() => {
+                    lastSyncedSandboxHead = sandboxHead;
+                  }),
+                ),
+                Effect.asVoid,
+              )
           : () => Effect.void;
 
       // 5. Resolve logging

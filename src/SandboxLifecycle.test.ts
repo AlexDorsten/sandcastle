@@ -1,5 +1,6 @@
 import { Effect, Layer, Ref } from "effect";
 import { exec } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -899,8 +900,7 @@ describe("withSandboxLifecycle (worktree mode)", () => {
     const syncLog = entries.find(
       (e) =>
         e._tag === "taskLog" &&
-        (e.title === "No commits to sync out" ||
-          e.title.startsWith("Syncing")),
+        (e.title === "No commits to sync out" || e.title.startsWith("Syncing")),
     );
     expect(syncLog).toBeUndefined();
   });
@@ -1163,9 +1163,7 @@ describe("withSandboxLifecycle (worktree mode)", () => {
           branch: "sandcastle/test",
           hooks: {
             sandbox: {
-              onSandboxReady: [
-                { command: "slow-install", timeoutMs: 500 },
-              ],
+              onSandboxReady: [{ command: "slow-install", timeoutMs: 500 }],
             },
           },
         },
@@ -1187,9 +1185,7 @@ describe("withSandboxLifecycle (worktree mode)", () => {
           branch: "sandcastle/test",
           hooks: {
             host: {
-              onSandboxReady: [
-                { command: "sleep 2", timeoutMs: 500 },
-              ],
+              onSandboxReady: [{ command: "sleep 2", timeoutMs: 500 }],
             },
           },
         },
@@ -1269,7 +1265,7 @@ describe("runHostHooks", () => {
     await Effect.runPromise(runHostHooks([{ command: "pwd > cwd.txt" }], dir));
 
     const content = await readFile(join(dir, "cwd.txt"), "utf-8");
-    expect(content.trim()).toBe(dir);
+    expect(content.trim()).toBe(realpathSync(dir));
   });
 
   it("aborts a running hook when signal fires", async () => {
@@ -1305,10 +1301,7 @@ describe("runHostHooks", () => {
     // sleep 2 with a 500ms timeout should fail
     await expect(
       Effect.runPromise(
-        runHostHooks(
-          [{ command: "sleep 2", timeoutMs: 500 }],
-          dir,
-        ),
+        runHostHooks([{ command: "sleep 2", timeoutMs: 500 }], dir),
       ),
     ).rejects.toThrow(/timed out/);
   });

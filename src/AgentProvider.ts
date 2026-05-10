@@ -1,3 +1,6 @@
+import { existsSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 export type ParsedStreamEvent =
   | { type: "text"; text: string }
   | { type: "result"; result: string }
@@ -21,7 +24,11 @@ const TOOL_ARG_FIELDS: Record<string, string> = {
 const extractErrorMessage = (obj: any): string | undefined => {
   const err = obj.error;
   if (typeof err === "string") return err;
-  if (typeof err === "object" && err !== null && typeof err.message === "string") {
+  if (
+    typeof err === "object" &&
+    err !== null &&
+    typeof err.message === "string"
+  ) {
     return err.message;
   }
   if (typeof obj.message === "string") return obj.message;
@@ -225,6 +232,20 @@ const parseCodexStreamLine = (line: string): ParsedStreamEvent[] => {
   try {
     const obj = JSON.parse(line);
 
+    if (
+      obj.type === "codex_app_server.text_delta" &&
+      typeof obj.text === "string"
+    ) {
+      return [{ type: "text", text: obj.text }];
+    }
+
+    if (
+      obj.type === "codex_app_server.result" &&
+      typeof obj.result === "string"
+    ) {
+      return [{ type: "result", result: obj.result }];
+    }
+
     // item.completed with agent_message → text + result
     if (
       obj.type === "item.completed" &&
@@ -269,6 +290,52 @@ export interface CodexOptions {
   readonly env?: Record<string, string>;
 }
 
+export interface CodexAppServerOptions {
+  readonly effort?: "low" | "medium" | "high" | "xhigh";
+  /** Environment variables injected by this agent provider. */
+  readonly env?: Record<string, string>;
+}
+
+const resolveCodexAppServerLaunch = (): {
+  readonly runner: string;
+  readonly scriptPath: string;
+} => {
+  const bridgeJsPath = fileURLToPath(
+    new URL("./codexAppServerBridge.js", import.meta.url),
+  );
+
+  if (existsSync(bridgeJsPath)) {
+    return {
+      runner: process.execPath,
+      scriptPath: bridgeJsPath,
+    };
+  }
+
+  const bridgeTsPath = fileURLToPath(
+    new URL("./codexAppServerBridge.ts", import.meta.url),
+  );
+  const tsxPath = fileURLToPath(
+    new URL(
+      process.platform === "win32"
+        ? "../node_modules/.bin/tsx.cmd"
+        : "../node_modules/.bin/tsx",
+      import.meta.url,
+    ),
+  );
+
+  if (existsSync(bridgeTsPath) && existsSync(tsxPath)) {
+    return {
+      runner: tsxPath,
+      scriptPath: bridgeTsPath,
+    };
+  }
+
+  return {
+    runner: process.execPath,
+    scriptPath: bridgeJsPath,
+  };
+};
+
 export const codex = (
   model: string,
   options?: CodexOptions,
@@ -291,6 +358,30 @@ export const codex = (
     const args = ["codex", "--model", model];
     if (prompt) args.push(prompt);
     return args;
+  },
+
+  parseStreamLine(line: string): ParsedStreamEvent[] {
+    return parseCodexStreamLine(line);
+  },
+});
+
+export const codexAppServer = (
+  model: string,
+  options?: CodexAppServerOptions,
+): AgentProvider => ({
+  name: "codex-app-server",
+  env: options?.env ?? {},
+  captureSessions: false,
+
+  buildPrintCommand({ prompt }: AgentCommandOptions): PrintCommand {
+    const { runner, scriptPath } = resolveCodexAppServerLaunch();
+    const effortFlag = options?.effort
+      ? ` --effort ${shellEscape(options.effort)}`
+      : "";
+    return {
+      command: `${shellEscape(runner)} ${shellEscape(scriptPath)} --model ${shellEscape(model)}${effortFlag}`,
+      stdin: prompt,
+    };
   },
 
   parseStreamLine(line: string): ParsedStreamEvent[] {

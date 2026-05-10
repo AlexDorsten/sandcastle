@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import { describe, expect, it } from "vitest";
+import type { AgentProvider } from "./AgentProvider.js";
 import { createWorktree } from "./createWorktree.js";
 import type {
   CreateWorktreeOptions,
@@ -20,9 +21,34 @@ import {
   type ExecResult,
   type SandboxProvider,
 } from "./SandboxProvider.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 import { makeLocalSandboxLayer } from "./testSandbox.js";
 
 const execAsync = promisify(exec);
+
+const claudeJsonParser = claudeCode("claude-opus-4-6");
+
+const makeHostJsonAgent = (script?: string): AgentProvider => {
+  const assistantLine = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "done" }] },
+  });
+  const resultLine = JSON.stringify({ type: "result", result: "done" });
+  const commandParts = [
+    ...(script ? [script] : []),
+    `printf '%s\n' '${assistantLine}' '${resultLine}'`,
+  ];
+
+  return {
+    name: "host-json-agent",
+    env: {},
+    captureSessions: false,
+    buildPrintCommand: () => ({
+      command: commandParts.join(" && "),
+    }),
+    parseStreamLine: (line) => claudeJsonParser.parseStreamLine(line),
+  };
+};
 
 const initRepo = async (dir: string) => {
   await execAsync("git init -b main", { cwd: dir });
@@ -720,6 +746,44 @@ describe("worktree.run()", () => {
       prompt: "test",
       // @ts-expect-error — sandbox is required
     } satisfies WorktreeRunOptions;
+  });
+
+  it("accepts noSandbox() as the sandbox provider", () => {
+    const options = {
+      agent: claudeCode("claude-opus-4-6"),
+      sandbox: noSandbox(),
+      prompt: "test",
+    } satisfies WorktreeRunOptions;
+
+    expect(options.sandbox.name).toBe("no-sandbox");
+  });
+
+  it("runs directly in the worktree with noSandbox()", async () => {
+    const hostDir = await mkdtemp(join(tmpdir(), "ws-run-nosandbox-"));
+    await initRepo(hostDir);
+    await commitFile(hostDir, "init.txt", "init", "initial commit");
+
+    const ws = await createWorktree({
+      branchStrategy: { type: "branch", branch: "nosandbox-run-test" },
+      cwd: hostDir,
+    });
+
+    try {
+      const result = await ws.run({
+        agent: makeHostJsonAgent(
+          'echo "worktree file" > worktree.txt && git add worktree.txt && git commit -m "worktree host commit" >/dev/null',
+        ),
+        sandbox: noSandbox(),
+        prompt: "create a file",
+      });
+
+      expect(result.branch).toBe("nosandbox-run-test");
+      expect(result.commits).toHaveLength(1);
+      expect(existsSync(join(ws.worktreePath, "worktree.txt"))).toBe(true);
+    } finally {
+      await ws.close();
+      await rm(hostDir, { recursive: true, force: true });
+    }
   });
 
   it("pre-aborted signal rejects immediately without running agent", async () => {

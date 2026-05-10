@@ -24,8 +24,27 @@ import type { BindMountSandboxHandle } from "../SandboxProvider.js";
 const mockExecFile = vi.mocked(execFile);
 const mockExecFileSync = vi.mocked(execFileSync);
 
+const isPodmanMachineList = (args: unknown): args is string[] =>
+  Array.isArray(args) && args[0] === "machine" && args[1] === "list";
+
+const isPodmanImageInspect = (args: unknown): args is string[] =>
+  Array.isArray(args) && args[0] === "image" && args[1] === "inspect";
+
+const mockPodmanCreateSuccess = () => {
+  mockExecFile.mockImplementation((_command, args, ...rest: any[]) => {
+    const callback = rest[rest.length - 1];
+    if (isPodmanMachineList(args)) {
+      callback(null, '[{"Running":true}]', "");
+      return undefined as any;
+    }
+    callback(null, "", "");
+    return undefined as any;
+  });
+};
+
 afterEach(() => {
   mockExecFile.mockReset();
+  mockExecFileSync.mockReset();
 });
 
 describe("podman()", () => {
@@ -99,11 +118,7 @@ describe("podman()", () => {
   });
 
   it("resolves relative sandboxPath against sandbox repo dir", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({
       selinuxLabel: false,
@@ -144,11 +159,7 @@ describe("podman()", () => {
   });
 
   it("formats readonly SELinux mounts as :ro,z", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({
       selinuxLabel: "z",
@@ -174,11 +185,7 @@ describe("podman()", () => {
   });
 
   it("formats writable SELinux mounts as :z", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({
       selinuxLabel: "z",
@@ -204,11 +211,7 @@ describe("podman()", () => {
   });
 
   it("formats readonly mounts without SELinux as :ro", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({
       selinuxLabel: false,
@@ -234,11 +237,7 @@ describe("podman()", () => {
   });
 
   it("formats mounts with no options when writable and no SELinux", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({
       selinuxLabel: false,
@@ -266,11 +265,7 @@ describe("podman()", () => {
   });
 
   it("passes --userns=keep-id by default", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({
@@ -292,11 +287,7 @@ describe("podman()", () => {
   });
 
   it("passes custom containerUid/containerGid to --userns and --user", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({ containerUid: 500, containerGid: 500 });
     const handle = await provider.create({
@@ -320,11 +311,7 @@ describe("podman()", () => {
   });
 
   it("allows disabling userns via option", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({ userns: false });
     const handle = await provider.create({
@@ -346,9 +333,17 @@ describe("podman()", () => {
   });
 
   it("throws a clear error when image is not found locally", async () => {
-    // First call is podman image inspect — fail it
-    mockExecFile.mockImplementationOnce((_command, _args, callback: any) => {
-      callback(new Error("no such image"), "", "");
+    mockExecFile.mockImplementation((_command, args, ...rest: any[]) => {
+      const callback = rest[rest.length - 1];
+      if (isPodmanMachineList(args)) {
+        callback(null, '[{"Running":true}]', "");
+        return undefined as any;
+      }
+      if (isPodmanImageInspect(args)) {
+        callback(new Error("no such image"), "", "");
+        return undefined as any;
+      }
+      callback(null, "", "");
       return undefined as any;
     });
 
@@ -407,11 +402,7 @@ describe("podman()", () => {
   });
 
   it("passes --network flag when network is a string", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({ network: "my-network" });
     const handle = await provider.create({
@@ -435,11 +426,7 @@ describe("podman()", () => {
   });
 
   it("passes multiple --network flags when network is an array", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({ network: ["net1", "net2"] });
     const handle = await provider.create({
@@ -466,11 +453,7 @@ describe("podman()", () => {
   });
 
   it("does not pass --network flag when network is omitted", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({
@@ -492,11 +475,7 @@ describe("podman()", () => {
   });
 
   it("does not run chown after container start", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({
@@ -519,11 +498,7 @@ describe("podman()", () => {
   });
 
   it("copyFileIn calls podman cp with correct arguments", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({
@@ -555,11 +530,7 @@ describe("podman()", () => {
   });
 
   it("copyFileOut calls podman cp with correct arguments", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({
@@ -593,7 +564,9 @@ describe("podman()", () => {
   it("copyFileIn rejects when podman cp fails", async () => {
     mockExecFile.mockImplementation((_command, args, ...rest: any[]) => {
       const callback = rest[rest.length - 1];
-      if (Array.isArray(args) && args[0] === "cp") {
+      if (isPodmanMachineList(args)) {
+        callback(null, '[{"Running":true}]', "");
+      } else if (Array.isArray(args) && args[0] === "cp") {
         callback(new Error("no such file"));
       } else {
         callback(null, "", "");
@@ -624,11 +597,7 @@ describe("podman()", () => {
     const tmpFile = join(tmpDir, "auth.json");
     writeFileSync(tmpFile, "{}");
 
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman({
       mounts: [
@@ -674,11 +643,7 @@ describe("podman()", () => {
   });
 
   it("does not run mkdir+chown when there are no file mounts", async () => {
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({
@@ -719,12 +684,7 @@ describe("podman()", () => {
   });
 
   it("includes timeout on signal handler cleanup", async () => {
-    // Allow image inspect + podman run to succeed
-    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
-      const callback = rest[rest.length - 1];
-      callback(null, "", "");
-      return undefined as any;
-    });
+    mockPodmanCreateSuccess();
 
     const provider = podman();
     const handle = await provider.create({

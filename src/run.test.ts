@@ -1,4 +1,11 @@
-import { readFileSync, mkdtempSync, writeFileSync } from "node:fs";
+import {
+  existsSync,
+  readFileSync,
+  mkdtempSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { execSync } from "node:child_process";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
@@ -15,11 +22,12 @@ import {
   type RunOptions,
   type RunResult,
 } from "./run.js";
-import { claudeCode } from "./AgentProvider.js";
+import { claudeCode, type AgentProvider } from "./AgentProvider.js";
 import { Output, StructuredOutputError } from "./Output.js";
 import type { InteractiveOptions } from "./interactive.js";
 import type { WorktreeInteractiveOptions } from "./createWorktree.js";
 import { defaultImageName } from "./sandboxes/docker.js";
+import { noSandbox } from "./sandboxes/no-sandbox.js";
 import * as sandcastle from "./SandboxProvider.js";
 import { createBindMountSandboxProvider } from "./SandboxProvider.js";
 
@@ -33,6 +41,30 @@ const testSandbox = createBindMountSandboxProvider({
     close: async () => {},
   }),
 });
+
+const claudeJsonParser = claudeCode("claude-opus-4-6");
+
+const makeHostJsonAgent = (script?: string): AgentProvider => {
+  const assistantLine = JSON.stringify({
+    type: "assistant",
+    message: { content: [{ type: "text", text: "done" }] },
+  });
+  const resultLine = JSON.stringify({ type: "result", result: "done" });
+  const commandParts = [
+    ...(script ? [script] : []),
+    `printf '%s\n' '${assistantLine}' '${resultLine}'`,
+  ];
+
+  return {
+    name: "host-json-agent",
+    env: {},
+    captureSessions: false,
+    buildPrintCommand: () => ({
+      command: commandParts.join(" && "),
+    }),
+    parseStreamLine: (line) => claudeJsonParser.parseStreamLine(line),
+  };
+};
 
 describe("printFileDisplayStartup", () => {
   let consoleSpy: ReturnType<typeof vi.spyOn>;
@@ -246,12 +278,21 @@ describe("RunOptions", () => {
     const _opts: RunOptions = { prompt: "test" };
   });
 
-  it("requires sandbox field typed as SandboxProvider", () => {
+  it("requires sandbox field typed as AnySandboxProvider", () => {
     // @ts-expect-error sandbox is required
     const _opts: RunOptions = {
       agent: claudeCode("claude-opus-4-6"),
       prompt: "test",
     };
+  });
+
+  it("accepts noSandbox() as the sandbox provider", () => {
+    const opts: RunOptions = {
+      agent: claudeCode("claude-opus-4-6"),
+      sandbox: noSandbox(),
+      prompt: "test",
+    };
+    expect(opts.sandbox.name).toBe("no-sandbox");
   });
 
   it("allows idleTimeoutSeconds to be specified", () => {
@@ -754,6 +795,38 @@ describe("run() error logging to file", () => {
         logging: { type: "file", path: logPath },
       }),
     ).rejects.toThrow("SOURCE_BRANCH");
+  });
+});
+
+describe("run() with noSandbox()", () => {
+  it("runs on the host with head branch strategy by default", async () => {
+    const hostDir = mkdtempSync(join(tmpdir(), "sandcastle-run-host-"));
+    execSync("git init -b main", { cwd: hostDir });
+    execSync('git config user.email "test@test.com"', { cwd: hostDir });
+    execSync('git config user.name "Test"', { cwd: hostDir });
+    writeFileSync(join(hostDir, "README.md"), "init\n");
+    execSync("git add README.md", { cwd: hostDir });
+    execSync('git commit -m "initial commit"', { cwd: hostDir });
+
+    try {
+      const result = await run({
+        agent: makeHostJsonAgent(
+          'echo "host file" > host.txt && git add host.txt && git commit -m "host commit" >/dev/null',
+        ),
+        sandbox: noSandbox(),
+        cwd: hostDir,
+        prompt: "create a file",
+      });
+
+      expect(result.branch).toBe("main");
+      expect(result.commits).toHaveLength(1);
+      expect(existsSync(join(hostDir, "host.txt"))).toBe(true);
+      expect(readFileSync(join(hostDir, "host.txt"), "utf-8")).toBe(
+        "host file\n",
+      );
+    } finally {
+      rmSync(hostDir, { recursive: true, force: true });
+    }
   });
 });
 

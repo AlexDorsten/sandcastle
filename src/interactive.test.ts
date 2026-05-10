@@ -1,5 +1,5 @@
 import { execSync } from "node:child_process";
-import { mkdtempSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, writeFileSync, existsSync, realpathSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { describe, expect, it, beforeEach, afterEach } from "vitest";
@@ -747,7 +747,7 @@ describe("interactive()", () => {
     expect(result.exitCode).toBe(0);
     // The worktree should be under process.cwd() (which is hostDir)
     expect(worktreeCwd).toBeDefined();
-    expect(worktreeCwd!.startsWith(hostDir)).toBe(true);
+    expect(worktreeCwd!.startsWith(realpathSync(hostDir))).toBe(true);
   });
 
   it("copies files to worktree with copyToWorktree", async () => {
