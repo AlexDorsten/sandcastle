@@ -144,6 +144,8 @@ export interface IsolatedSandboxHandle {
 export interface IsolatedCreateOptions {
   /** Environment variables to inject into the sandbox. */
   readonly env: Record<string, string>;
+  /** Host-side path to the original repo root when available. */
+  readonly hostRepoPath?: string;
 }
 
 /** Configuration for createIsolatedSandboxProvider. */

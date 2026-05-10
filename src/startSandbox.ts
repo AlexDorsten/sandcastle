@@ -150,7 +150,11 @@ const startIsolatedSandbox = (
 > =>
   Effect.gen(function* () {
     const handle = yield* Effect.tryPromise({
-      try: () => options.provider.create({ env: options.env }),
+      try: () =>
+        options.provider.create({
+          env: options.env,
+          hostRepoPath: options.hostRepoDir,
+        }),
       catch: (e) =>
         new WorktreeError({
           message: `Isolated provider '${options.provider.name}' setup failed: ${e instanceof Error ? e.message : String(e)}`,

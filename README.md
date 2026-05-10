@@ -14,13 +14,13 @@ A TypeScript library for orchestrating AI coding agents in isolated sandboxes:
 2. Sandcastle handles sandboxing the agent with a configurable branch strategy.
 3. The commits made on the branches get merged back.
 
-Sandcastle is provider-agnostic — it ships with built-in providers for Docker, Podman, and Vercel, and you can create your own. Great for parallelizing multiple AFK agents, creating review pipelines, or even just orchestrating your own agents.
+Sandcastle is provider-agnostic — it ships with built-in providers for Docker, Docker-isolated, Podman, and Vercel, and you can create your own. Great for parallelizing multiple AFK agents, creating review pipelines, or even just orchestrating your own agents.
 
 ## Prerequisites
 
 - [Git](https://git-scm.com/)
 - A sandbox provider for isolated runs, or `noSandbox()` for host-backed runs. Built-in options:
-  - [Docker Desktop](https://www.docker.com/) — most common for local development
+  - [Docker Desktop](https://www.docker.com/) — most common for local development (bind-mount or isolated copy-in/out)
   - [Podman](https://podman.io/) — rootless alternative to Docker
   - [Vercel](https://vercel.com/) — cloud-based Firecracker microVMs via `@vercel/sandbox`
   - Or [create your own](#custom-sandbox-providers) using `createBindMountSandboxProvider` or `createIsolatedSandboxProvider`
@@ -58,7 +58,7 @@ import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 
 await run({
   agent: claudeCode("claude-opus-4-6"),
-  sandbox: docker(), // or podman(), vercel(), or your own provider
+  sandbox: docker(), // or dockerIsolated(), podman(), vercel(), or your own provider
   promptFile: ".sandcastle/prompt.md",
 });
 ```
@@ -67,26 +67,35 @@ await run({
 
 Sandcastle uses sandbox providers to decide where an agent runs. `run()` and worktree-backed `run()` flows accept any `AnySandboxProvider`, including `noSandbox()` for host-backed execution. `createSandbox()` still requires a real `SandboxProvider` because it manages a reusable sandbox lifecycle. Built-in providers:
 
-| Provider   | Import path                                | Type       | Accepted by                                                                                       |
-| ---------- | ------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------- |
-| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
-| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
-| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
-| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `interactive()`, `wt.run()`, `wt.interactive()` (default for `wt.interactive()`)         |
+| Provider        | Import path                                     | Type       | Accepted by                                                                                       |
+| --------------- | ----------------------------------------------- | ---------- | ------------------------------------------------------------------------------------------------- |
+| Docker          | `@ai-hero/sandcastle/sandboxes/docker`          | Bind-mount | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| Docker isolated | `@ai-hero/sandcastle/sandboxes/docker-isolated` | Isolated   | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| Podman          | `@ai-hero/sandcastle/sandboxes/podman`          | Bind-mount | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| Vercel          | `@ai-hero/sandcastle/sandboxes/vercel`          | Isolated   | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| No-sandbox      | `@ai-hero/sandcastle/sandboxes/no-sandbox`      | None       | `run()`, `interactive()`, `wt.run()`, `wt.interactive()` (default for `wt.interactive()`)         |
 
 Worktree methods (`wt.run()`, `wt.interactive()`, `wt.createSandbox()`) accept the same providers as their top-level counterparts. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
 
 ```typescript
-import { run, codexAppServer } from "@ai-hero/sandcastle";
+import { run, claudeCode, codexAppServer } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+import { dockerIsolated } from "@ai-hero/sandcastle/sandboxes/docker-isolated";
 import { podman } from "@ai-hero/sandcastle/sandboxes/podman";
 import { vercel } from "@ai-hero/sandcastle/sandboxes/vercel";
 import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
 
-// Docker, Podman, and Vercel are interchangeable in run() and createSandbox():
+// Docker, Docker isolated, Podman, and Vercel are interchangeable in run() and createSandbox():
 await run({
   agent: claudeCode("claude-opus-4-6"),
   sandbox: docker(),
+  prompt: "...",
+});
+
+await run({
+  agent: claudeCode("claude-opus-4-6"),
+  sandbox: dockerIsolated(),
+  branchStrategy: { type: "merge-to-head" },
   prompt: "...",
 });
 
@@ -100,6 +109,8 @@ await run({
 ```
 
 `noSandbox()` is best for host-backed tools such as `codexAppServer()` that need to reuse local login state. It runs the agent directly in the host repo or worktree, so branch strategy becomes especially important for AFK runs.
+
+`docker()` bind-mounts the host worktree into the container. `dockerIsolated()` copies the repo into the container and syncs changes back out. Prefer `dockerIsolated()` when Docker Desktop cannot reliably mount external host paths such as `/Volumes/...` on macOS.
 
 You can also [create your own provider](#custom-sandbox-providers) using `createBindMountSandboxProvider` or `createIsolatedSandboxProvider`.
 
@@ -1186,6 +1197,7 @@ const result = await run({
 For real-world examples, see:
 
 - [`src/sandboxes/docker.ts`](src/sandboxes/docker.ts) — bind-mount provider using Docker containers (with SELinux label support)
+- [`src/sandboxes/docker-isolated.ts`](src/sandboxes/docker-isolated.ts) — isolated Docker provider using `docker cp`/sync-in instead of bind mounts
 - [`src/sandboxes/vercel.ts`](src/sandboxes/vercel.ts) — isolated provider using Vercel Firecracker microVMs via `@vercel/sandbox`
 - [`src/sandboxes/podman.ts`](src/sandboxes/podman.ts) — bind-mount provider using Podman containers (with SELinux label support)
 - [`src/sandboxes/test-isolated.ts`](src/sandboxes/test-isolated.ts) — isolated provider using temp directories (used in tests)

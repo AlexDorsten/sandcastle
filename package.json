@@ -14,6 +14,10 @@
       "import": "./dist/sandboxes/docker.js",
       "types": "./dist/sandboxes/docker.d.ts"
     },
+    "./sandboxes/docker-isolated": {
+      "import": "./dist/sandboxes/docker-isolated.js",
+      "types": "./dist/sandboxes/docker-isolated.d.ts"
+    },
     "./sandboxes/vercel": {
       "import": "./dist/sandboxes/vercel.js",
       "types": "./dist/sandboxes/vercel.d.ts"

@@ -1,9 +1,9 @@
 /**
- * Docker sandbox provider — wraps DockerLifecycle into a SandboxProvider.
+ * Docker isolated sandbox provider — copies the repo into a Docker container
+ * instead of bind-mounting it from the host.
  *
- * Usage:
- *   import { docker } from "sandcastle/sandboxes/docker";
- *   await run({ agent: claudeCode("claude-opus-4-6"), sandbox: docker() });
+ * Useful on Docker Desktop setups where external host paths (for example
+ * `/Volumes/...` on macOS) are not mounted reliably into containers.
  */
 
 import {
@@ -13,123 +13,61 @@ import {
   type StdioOptions,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { posix } from "node:path";
 import { createInterface } from "node:readline";
 import { Effect } from "effect";
 import { startContainer, removeContainer } from "../DockerLifecycle.js";
+import { SANDBOX_REPO_DIR } from "../SandboxFactory.js";
 import {
-  createBindMountSandboxProvider,
-  type SandboxProvider,
-  type BindMountCreateOptions,
-  type BindMountSandboxHandle,
+  createIsolatedSandboxProvider,
   type ExecResult,
   type InteractiveExecOptions,
+  type IsolatedSandboxHandle,
+  type IsolatedSandboxProvider,
 } from "../SandboxProvider.js";
-import type { MountConfig } from "../MountConfig.js";
-import type { SelinuxLabel } from "../mountUtils.js";
-import {
-  defaultImageName,
-  resolveUserMounts,
-  processFileMountParents,
-} from "../mountUtils.js";
+import { defaultImageName } from "../mountUtils.js";
 import { checkDockerImageUid } from "./dockerShared.js";
 
-export interface DockerOptions {
+export interface DockerIsolatedOptions {
   /** Docker image name (default: derived from repo directory name). */
   readonly imageName?: string;
   /**
-   * The UID of the `agent` user inside the container image (default: host UID via `process.getuid()`, or 1000).
-   *
-   * Must match the UID baked into the image at build time. Used as the `--user` flag value
-   * and checked against the image's configured UID in the pre-flight diagnostic.
+   * The UID of the `agent` user inside the container image (default: host UID
+   * via `process.getuid()`, or 1000).
    */
   readonly containerUid?: number;
   /**
-   * The GID of the `agent` user inside the container image (default: host GID via `process.getgid()`, or 1000).
-   *
-   * Must match the GID baked into the image at build time. Used as the `--user` flag value.
+   * The GID of the `agent` user inside the container image (default: host GID
+   * via `process.getgid()`, or 1000).
    */
   readonly containerGid?: number;
-  /**
-   * SELinux volume label suffix applied to bind mounts.
-   *
-   * - `"z"` — shared label (default). No-op on non-SELinux systems.
-   * - `"Z"` — private label; only this container can access the mount.
-   * - `false` — disable labeling entirely.
-   */
-  readonly selinuxLabel?: SelinuxLabel;
-  /**
-   * Additional host directories to bind-mount into the sandbox.
-   *
-   * Each entry specifies a `hostPath` (tilde-expanded) and `sandboxPath`.
-   * If `hostPath` does not exist, sandbox creation fails with a clear error.
-   */
-  readonly mounts?: readonly MountConfig[];
-  /** Environment variables injected by this provider. Merged at launch time with env resolver and agent provider env. */
+  /** Environment variables injected by this provider. */
   readonly env?: Record<string, string>;
   /**
    * Docker network(s) to attach the container to.
    *
    * - `"my-network"` → `--network my-network`
    * - `["net1", "net2"]` → `--network net1 --network net2`
-   *
-   * When omitted, Docker's default bridge network is used.
    */
   readonly network?: string | readonly string[];
 }
 
-/**
- * Create a Docker sandbox provider.
- *
- * The returned provider creates Docker containers with bind-mounts
- * for the worktree and git directories.
- */
-export const docker = (options?: DockerOptions): SandboxProvider => {
-  const configuredImageName = options?.imageName;
-  const selinuxLabel = options?.selinuxLabel ?? "z";
-  const sandboxHomedir = "/home/agent";
-  const userMounts = options?.mounts
-    ? resolveUserMounts(options.mounts, sandboxHomedir)
-    : [];
-  // Validate file mounts and collect parent dirs to create at container start.
-  // Throws at construction time if any file mount parent is outside sandboxHomedir.
-  const parentDirsToCreate = processFileMountParents(
-    userMounts,
-    sandboxHomedir,
-  );
-
-  return createBindMountSandboxProvider({
-    name: "docker",
+export const dockerIsolated = (
+  options?: DockerIsolatedOptions,
+): IsolatedSandboxProvider =>
+  createIsolatedSandboxProvider({
+    name: "docker-isolated",
     env: options?.env,
-    sandboxHomedir,
-    create: async (
-      createOptions: BindMountCreateOptions,
-    ): Promise<BindMountSandboxHandle> => {
+    create: async (createOptions): Promise<IsolatedSandboxHandle> => {
       const containerName = `sandcastle-${randomUUID()}`;
-
-      const worktreePath =
-        createOptions.mounts.find(
-          (m) => m.hostPath === createOptions.worktreePath,
-        )?.sandboxPath ?? "/home/agent/workspace";
-
-      // Build volume mount list (internal mounts + user-provided mounts)
-      const allMounts = [...createOptions.mounts, ...userMounts];
-      const volumeMounts = allMounts.map((m) => ({
-        hostPath: m.hostPath,
-        sandboxPath: m.sandboxPath,
-        readonly: m.readonly,
-      }));
-
-      // Resolve image name
       const imageName =
-        configuredImageName ?? defaultImageName(createOptions.hostRepoPath);
-
+        options?.imageName ??
+        defaultImageName(createOptions.hostRepoPath ?? process.cwd() ?? ".");
       const containerUid = options?.containerUid ?? process.getuid?.() ?? 1000;
       const containerGid = options?.containerGid ?? process.getgid?.() ?? 1000;
 
-      // Pre-flight: verify image exists and UID matches
-      await checkDockerImageUid(imageName, containerUid, "docker");
+      await checkDockerImageUid(imageName, containerUid, "dockerIsolated");
 
-      // Start container
       await Effect.runPromise(
         startContainer(
           containerName,
@@ -139,48 +77,42 @@ export const docker = (options?: DockerOptions): SandboxProvider => {
             HOME: "/home/agent",
           },
           {
-            volumeMounts,
-            workdir: worktreePath,
+            workdir: "/home/agent",
             user: `${containerUid}:${containerGid}`,
             network: options?.network,
-            selinuxLabel,
           },
         ),
       );
 
-      // Create parent directories for file mounts and chown to the container user
-      for (const dir of parentDirsToCreate) {
-        await new Promise<void>((resolve, reject) => {
-          execFile(
-            "docker",
-            [
-              "exec",
-              "--user",
-              "0:0",
-              containerName,
-              "sh",
-              "-c",
-              `mkdir -p "$1" && chown "$2" "$1"`,
-              "sh",
-              dir,
-              `${containerUid}:${containerGid}`,
-            ],
-            (error) => {
-              if (error) {
-                reject(
-                  new Error(
-                    `Failed to create parent directory '${dir}' in container: ${error.message}`,
-                  ),
-                );
-              } else {
-                resolve();
-              }
-            },
-          );
-        });
-      }
+      await new Promise<void>((resolve, reject) => {
+        execFile(
+          "docker",
+          [
+            "exec",
+            "--user",
+            "0:0",
+            containerName,
+            "sh",
+            "-c",
+            `mkdir -p "$1" && chown "$2" "$1"`,
+            "sh",
+            SANDBOX_REPO_DIR,
+            `${containerUid}:${containerGid}`,
+          ],
+          (error) => {
+            if (error) {
+              reject(
+                new Error(
+                  `Failed to prepare isolated worktree '${SANDBOX_REPO_DIR}' in container: ${error.message}`,
+                ),
+              );
+            } else {
+              resolve();
+            }
+          },
+        );
+      });
 
-      // Set up signal handlers for cleanup
       const onExit = () => {
         try {
           execFileSync("docker", ["rm", "-f", containerName], {
@@ -198,8 +130,8 @@ export const docker = (options?: DockerOptions): SandboxProvider => {
       process.on("SIGINT", onSignal);
       process.on("SIGTERM", onSignal);
 
-      const handle: BindMountSandboxHandle = {
-        worktreePath,
+      return {
+        worktreePath: SANDBOX_REPO_DIR,
 
         exec: (
           command: string,
@@ -270,7 +202,6 @@ export const docker = (options?: DockerOptions): SandboxProvider => {
         ): Promise<{ exitCode: number }> => {
           return new Promise((resolve, reject) => {
             const dockerArgs = ["exec"];
-            // Allocate a pseudo-terminal when stdin looks like a TTY
             if (
               "isTTY" in opts.stdin &&
               (opts.stdin as { isTTY?: boolean }).isTTY
@@ -296,8 +227,30 @@ export const docker = (options?: DockerOptions): SandboxProvider => {
           });
         },
 
-        copyFileIn: (hostPath: string, sandboxPath: string): Promise<void> =>
-          new Promise((resolve, reject) => {
+        copyIn: async (
+          hostPath: string,
+          sandboxPath: string,
+        ): Promise<void> => {
+          const sandboxParent = posix.dirname(sandboxPath);
+          await new Promise<void>((resolve, reject) => {
+            execFile(
+              "docker",
+              ["exec", containerName, "mkdir", "-p", sandboxParent],
+              (error) => {
+                if (error) {
+                  reject(
+                    new Error(
+                      `Failed to create sandbox parent '${sandboxParent}': ${error.message}`,
+                    ),
+                  );
+                } else {
+                  resolve();
+                }
+              },
+            );
+          });
+
+          await new Promise<void>((resolve, reject) => {
             execFile(
               "docker",
               ["cp", hostPath, `${containerName}:${sandboxPath}`],
@@ -309,7 +262,8 @@ export const docker = (options?: DockerOptions): SandboxProvider => {
                 }
               },
             );
-          }),
+          });
+        },
 
         copyFileOut: (sandboxPath: string, hostPath: string): Promise<void> =>
           new Promise((resolve, reject) => {
@@ -333,11 +287,7 @@ export const docker = (options?: DockerOptions): SandboxProvider => {
           await Effect.runPromise(removeContainer(containerName));
         },
       };
-
-      return handle;
     },
   });
-};
 
-// Re-export for backwards compatibility
 export { defaultImageName };
