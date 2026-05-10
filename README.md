@@ -836,7 +836,7 @@ await run({
 
 The `codexAppServer()` factory talks to `codex app-server` on the host instead of launching `codex exec` inside a sandbox. This is the right fit when you want a host-backed harness that reuses the local Codex login session, including ChatGPT-plan access exposed through `codex login`.
 
-For a step-by-step setup guide, see [docs/content/docs/codex-app-server-howto.mdx](/Volumes/Verbatim/Workspace/Coding/sandcastle/docs/content/docs/codex-app-server-howto.mdx).
+For a step-by-step setup guide, see [docs/content/docs/codex-app-server-howto.mdx](docs/content/docs/codex-app-server-howto.mdx).
 
 ```typescript
 import { run, codexAppServer } from "@ai-hero/sandcastle";
