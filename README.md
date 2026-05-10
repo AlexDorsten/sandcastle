@@ -112,6 +112,27 @@ await run({
 
 `docker()` bind-mounts the host worktree into the container. `dockerIsolated()` copies the repo into the container and syncs changes back out. Prefer `dockerIsolated()` when Docker Desktop cannot reliably mount external host paths such as `/Volumes/...` on macOS.
 
+When you need extra inputs beyond the main repo:
+
+- Use `copyToWorktree` for repo-relative files or directories that should be copied into the isolated worktree before sandbox hooks run.
+- Use `dockerIsolated({ extraCopies: [...] })` for sibling repos or config directories that live outside the main repo root.
+
+```typescript
+await run({
+  agent: claudeCode("claude-opus-4-6"),
+  sandbox: dockerIsolated({
+    extraCopies: [
+      {
+        hostPath: "/Users/alex/Workspace/CLI-Anything",
+        sandboxPath: "/home/agent/support/CLI-Anything",
+      },
+    ],
+  }),
+  copyToWorktree: [".env.local"],
+  prompt: "...",
+});
+```
+
 You can also [create your own provider](#custom-sandbox-providers) using `createBindMountSandboxProvider` or `createIsolatedSandboxProvider`.
 
 ## API

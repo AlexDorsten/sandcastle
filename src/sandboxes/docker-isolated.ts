@@ -13,6 +13,7 @@ import {
   type StdioOptions,
 } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { posix } from "node:path";
 import { createInterface } from "node:readline";
 import { Effect } from "effect";
@@ -43,6 +44,19 @@ export interface DockerIsolatedOptions {
   readonly containerGid?: number;
   /** Environment variables injected by this provider. */
   readonly env?: Record<string, string>;
+  /**
+   * Extra host paths to copy into the sandbox during setup.
+   *
+   * Use this for sibling repos or config directories that live outside the
+   * main repository root. For repo-relative extras, prefer `copyToWorktree`
+   * on `run()` / `createSandbox()`.
+   */
+  readonly extraCopies?: ReadonlyArray<{
+    /** Absolute host path to a file or directory. */
+    readonly hostPath: string;
+    /** Absolute sandbox path to copy it to. */
+    readonly sandboxPath: string;
+  }>;
   /**
    * Docker network(s) to attach the container to.
    *
@@ -129,6 +143,53 @@ export const dockerIsolated = (
       process.on("exit", onExit);
       process.on("SIGINT", onSignal);
       process.on("SIGTERM", onSignal);
+
+      const copyInToContainer = async (
+        hostPath: string,
+        sandboxPath: string,
+      ): Promise<void> => {
+        const sandboxParent = posix.dirname(sandboxPath);
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            "docker",
+            ["exec", containerName, "mkdir", "-p", sandboxParent],
+            (error) => {
+              if (error) {
+                reject(
+                  new Error(
+                    `Failed to create sandbox parent '${sandboxParent}': ${error.message}`,
+                  ),
+                );
+              } else {
+                resolve();
+              }
+            },
+          );
+        });
+
+        await new Promise<void>((resolve, reject) => {
+          execFile(
+            "docker",
+            ["cp", hostPath, `${containerName}:${sandboxPath}`],
+            (error) => {
+              if (error) {
+                reject(new Error(`docker cp (in) failed: ${error.message}`));
+              } else {
+                resolve();
+              }
+            },
+          );
+        });
+      };
+
+      if (options?.extraCopies && options.extraCopies.length > 0) {
+        for (const entry of options.extraCopies) {
+          if (!existsSync(entry.hostPath)) {
+            continue;
+          }
+          await copyInToContainer(entry.hostPath, entry.sandboxPath);
+        }
+      }
 
       return {
         worktreePath: SANDBOX_REPO_DIR,
@@ -227,43 +288,8 @@ export const dockerIsolated = (
           });
         },
 
-        copyIn: async (
-          hostPath: string,
-          sandboxPath: string,
-        ): Promise<void> => {
-          const sandboxParent = posix.dirname(sandboxPath);
-          await new Promise<void>((resolve, reject) => {
-            execFile(
-              "docker",
-              ["exec", containerName, "mkdir", "-p", sandboxParent],
-              (error) => {
-                if (error) {
-                  reject(
-                    new Error(
-                      `Failed to create sandbox parent '${sandboxParent}': ${error.message}`,
-                    ),
-                  );
-                } else {
-                  resolve();
-                }
-              },
-            );
-          });
-
-          await new Promise<void>((resolve, reject) => {
-            execFile(
-              "docker",
-              ["cp", hostPath, `${containerName}:${sandboxPath}`],
-              (error) => {
-                if (error) {
-                  reject(new Error(`docker cp (in) failed: ${error.message}`));
-                } else {
-                  resolve();
-                }
-              },
-            );
-          });
-        },
+        copyIn: async (hostPath: string, sandboxPath: string): Promise<void> =>
+          copyInToContainer(hostPath, sandboxPath),
 
         copyFileOut: (sandboxPath: string, hostPath: string): Promise<void> =>
           new Promise((resolve, reject) => {

@@ -40,6 +40,50 @@ describe("dockerIsolated()", () => {
     expect(provider.env).toEqual({ MY_VAR: "hello" });
   });
 
+  it("copies configured extra host paths into the sandbox during setup", async () => {
+    mockExecFile.mockImplementation((_command, _args, ...rest: any[]) => {
+      const callback = rest[rest.length - 1];
+      callback(null, "", "");
+      return undefined as any;
+    });
+
+    const provider = dockerIsolated({
+      extraCopies: [
+        {
+          hostPath: "/tmp",
+          sandboxPath: "/home/agent/support/host-tools",
+        },
+      ],
+    });
+    const handle = await provider.create({
+      env: {},
+      hostRepoPath: "/tmp/repo",
+    });
+
+    const cpCall = mockExecFile.mock.calls.find(
+      ([cmd, args]) =>
+        cmd === "docker" &&
+        Array.isArray(args) &&
+        args[0] === "cp" &&
+        args[1] === "/tmp" &&
+        typeof args[2] === "string" &&
+        args[2].endsWith(":/home/agent/support/host-tools"),
+    );
+    expect(cpCall).toBeDefined();
+
+    const mkdirCall = mockExecFile.mock.calls.find(
+      ([cmd, args]) =>
+        cmd === "docker" &&
+        Array.isArray(args) &&
+        args[0] === "exec" &&
+        args.includes("mkdir") &&
+        args.includes("/home/agent/support"),
+    );
+    expect(mkdirCall).toBeDefined();
+
+    await handle.close();
+  });
+
   it("runs pre-flight docker image inspect before docker run", async () => {
     const callOrder: string[] = [];
     mockExecFile.mockImplementation((_command, args, ...rest: any[]) => {
