@@ -60,6 +60,14 @@ const emit = (event: unknown): void => {
   process.stdout.write(`${JSON.stringify(event)}\n`);
 };
 
+let lastEmittedErrorMessage: string | undefined;
+
+const emitError = (message: string): void => {
+  if (lastEmittedErrorMessage === message) return;
+  lastEmittedErrorMessage = message;
+  emit({ type: "error", error: { message } });
+};
+
 const respond = (
   stdin: NodeJS.WritableStream,
   id: JsonRpcId,
@@ -85,7 +93,7 @@ const rejectPending = (
 };
 
 const fail = (message: string): never => {
-  emit({ type: "error", error: { message } });
+  emitError(message);
   throw new Error(message);
 };
 
@@ -262,7 +270,7 @@ const run = async (): Promise<void> => {
           typeof message.params?.error?.message === "string"
             ? message.params.error.message
             : "Codex app-server returned an unknown error";
-        emit({ type: "error", error: { message: messageText } });
+        emitError(messageText);
         return;
       }
       default:
@@ -362,7 +370,7 @@ const run = async (): Promise<void> => {
 run().catch((error: unknown) => {
   const message = error instanceof Error ? error.message : String(error);
   if (!message.includes("Codex app-server is not signed in")) {
-    emit({ type: "error", error: { message } });
+    emitError(message);
   }
   process.stderr.write(`${message}\n`);
   process.exitCode = 1;

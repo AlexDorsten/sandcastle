@@ -389,7 +389,7 @@ await wt.interactive({
   prompt: "Explore the codebase and understand the bug.",
 });
 
-// Run an AFK agent in the worktree (sandbox is required)
+// Run an AFK agent in the worktree
 const result = await wt.run({
   agent: claudeCode("claude-opus-4-6"),
   sandbox: docker({ imageName: "sandcastle:myrepo" }),
@@ -430,7 +430,7 @@ await sandbox.close();
 | ------------------------ | --------------------------------------------------------------------- | --------------------------------------------------- |
 | `branch`                 | string                                                                | The branch the worktree is on                       |
 | `worktreePath`           | string                                                                | Host path to the worktree                           |
-| `run(options)`           | `(options: WorktreeRunOptions) => Promise<WorktreeRunResult>`         | Run an AFK agent in the worktree (sandbox required) |
+| `run(options)`           | `(options: WorktreeRunOptions) => Promise<WorktreeRunResult>`         | Run an AFK agent in the worktree                    |
 | `interactive(options)`   | `(options: WorktreeInteractiveOptions) => Promise<InteractiveResult>` | Run an interactive agent session in the worktree    |
 | `createSandbox(options)` | `(options: WorktreeCreateSandboxOptions) => Promise<Sandbox>`         | Create a long-lived sandbox backed by this worktree |
 | `close()`                | `() => Promise<CloseResult>`                                          | Clean up the worktree (preserves if dirty)          |
