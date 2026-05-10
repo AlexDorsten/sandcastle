@@ -1,0 +1,133 @@
+---
+title: Codex App-Server HOWTO
+description: Use Sandcastle with Codex login sessions, ChatGPT-plan access, and host-backed runs.
+---
+
+## Overview
+
+Sandcastle now supports two practical Codex setups:
+
+1. **Host-backed Codex runs** with `codexAppServer()` and `noSandbox()`
+2. **Sandboxed Codex runs** with `codex()` and `codexCliMounts()`
+
+Use the host-backed path when you want to reuse a local `codex login` session directly on the host, including ChatGPT-plan access exposed through Codex login.
+
+Use the sandboxed path when you still want Docker or Podman isolation, but need the sandboxed Codex CLI to see the host's `~/.codex` auth and config files.
+
+## Option 1: Host-Backed Codex Runs
+
+This is the simplest way to use Sandcastle with a local Codex subscription/login session.
+
+### Prerequisites
+
+1. Install Codex on the host
+2. Run `codex login` on the host
+3. Verify the login works before using Sandcastle
+
+### Basic Run
+
+```ts
+import { codexAppServer, run } from "@ai-hero/sandcastle";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
+
+await run({
+  agent: codexAppServer("gpt-5.4", { effort: "high" }),
+  sandbox: noSandbox(),
+  promptFile: ".sandcastle/prompt.md",
+});
+```
+
+### Worktree Run
+
+Use a worktree-backed run when you want branch isolation without launching Docker or Podman:
+
+```ts
+import { codexAppServer, createWorktree } from "@ai-hero/sandcastle";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
+
+await using wt = await createWorktree({
+  branchStrategy: { type: "merge-to-head" },
+});
+
+await wt.run({
+  agent: codexAppServer("gpt-5.4"),
+  sandbox: noSandbox(),
+  promptFile: ".sandcastle/prompt.md",
+});
+```
+
+### When To Use This Path
+
+- You want to reuse `codex login` directly on the host
+- You want ChatGPT-plan-backed Codex access
+- You do not need the agent itself to run inside Docker or Podman
+- You want a fast AFK run path with minimal setup
+
+### Important Limits
+
+- `codexAppServer()` is intended for `run()` and `wt.run()`
+- `codexAppServer()` is not the path for `interactive()`
+- `createSandbox()` still requires a real sandbox provider such as Docker or Podman
+
+## Option 2: Sandboxed Codex Runs With Mounted Host Auth
+
+If you still want a container sandbox, mount the host's Codex auth/config files into the sandbox.
+
+```ts
+import { codex, codexCliMounts, run } from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+
+await run({
+  agent: codex("gpt-5.4"),
+  sandbox: docker({
+    mounts: codexCliMounts(),
+  }),
+  promptFile: ".sandcastle/prompt.md",
+});
+```
+
+`codexCliMounts()` mounts any existing host files from `~/.codex` into `/home/agent/.codex` as read-only files:
+
+- `auth.json`
+- `config.toml`
+- `config.json`
+
+### When To Use This Path
+
+- You want Docker or Podman isolation
+- You want the sandboxed Codex CLI to reuse host auth/config
+- You want to keep the existing sandbox-oriented Sandcastle flow
+
+## Choosing Between The Two
+
+Choose `codexAppServer() + noSandbox()` when:
+
+- your main goal is to reuse the host's logged-in Codex session
+- you are comfortable with the agent running directly in the host repo or worktree
+- you want the simplest subscription-backed setup
+
+Choose `codex() + codexCliMounts()` when:
+
+- you still want a real sandbox boundary
+- you already have Docker or Podman-based workflows
+- you want Codex inside the sandbox, not on the host
+
+## Troubleshooting
+
+### `Codex app-server is not signed in on the host`
+
+Run:
+
+```bash
+codex login
+```
+
+Then retry the Sandcastle run.
+
+### `createSandbox()` rejects `noSandbox()`
+
+That is expected. `createSandbox()` manages a reusable sandbox lifecycle, so it still requires a real sandbox provider.
+
+### You want interactive Codex app-server sessions
+
+This HOWTO covers the current Phase 1 path for AFK runs. Full interactive app-server support is not the goal of this setup yet.
