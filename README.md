@@ -19,7 +19,7 @@ Sandcastle is provider-agnostic — it ships with built-in providers for Docker,
 ## Prerequisites
 
 - [Git](https://git-scm.com/)
-- A sandbox provider — Sandcastle needs an isolated environment to run agents in. Built-in options:
+- A sandbox provider for isolated runs, or `noSandbox()` for host-backed runs. Built-in options:
   - [Docker Desktop](https://www.docker.com/) — most common for local development
   - [Podman](https://podman.io/) — rootless alternative to Docker
   - [Vercel](https://vercel.com/) — cloud-based Firecracker microVMs via `@vercel/sandbox`
@@ -39,7 +39,7 @@ npm install --save-dev @ai-hero/sandcastle
 npx sandcastle init
 ```
 
-3. Edit `.sandcastle/.env` and fill in your default values for `ANTHROPIC_API_KEY`. If you want to use your Claude subscription instead of an API key, see [#191](https://github.com/mattpocock/sandcastle/issues/191).
+3. Edit `.sandcastle/.env` and fill in the credentials your agent provider needs, such as `ANTHROPIC_API_KEY` for Claude Code or `OPENAI_API_KEY` for Codex CLI. If you use `codexAppServer()`, it reuses the host's `codex login` session instead of an API key.
 
 ```bash
 cp .sandcastle/.env.example .sandcastle/.env
@@ -65,18 +65,19 @@ await run({
 
 ## Sandbox Providers
 
-Sandcastle uses a `SandboxProvider` to create isolated environments. The `sandbox` option on `run()` and `createSandbox()` accepts any provider. A no-sandbox option is also available for `interactive()` and `wt.interactive()`. Built-in providers:
+Sandcastle uses sandbox providers to decide where an agent runs. `run()` and worktree-backed `run()` flows accept any `AnySandboxProvider`, including `noSandbox()` for host-backed execution. `createSandbox()` still requires a real `SandboxProvider` because it manages a reusable sandbox lifecycle. Built-in providers:
 
-| Provider   | Import path                                | Type       | Accepted by                                   |
-| ---------- | ------------------------------------------ | ---------- | --------------------------------------------- |
-| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`   |
-| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`   |
-| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`   |
-| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `interactive()`, `wt.interactive()` (default) |
+| Provider   | Import path                                | Type       | Accepted by                                                                                       |
+| ---------- | ------------------------------------------ | ---------- | ------------------------------------------------------------------------------------------------- |
+| Docker     | `@ai-hero/sandcastle/sandboxes/docker`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| Podman     | `@ai-hero/sandcastle/sandboxes/podman`     | Bind-mount | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| Vercel     | `@ai-hero/sandcastle/sandboxes/vercel`     | Isolated   | `run()`, `createSandbox()`, `interactive()`, `wt.run()`, `wt.createSandbox()`, `wt.interactive()` |
+| No-sandbox | `@ai-hero/sandcastle/sandboxes/no-sandbox` | None       | `run()`, `interactive()`, `wt.run()`, `wt.interactive()` (default for `wt.interactive()`)         |
 
 Worktree methods (`wt.run()`, `wt.interactive()`, `wt.createSandbox()`) accept the same providers as their top-level counterparts. `wt.interactive()` defaults to `noSandbox()` when no sandbox is specified.
 
 ```typescript
+import { run, codexAppServer } from "@ai-hero/sandcastle";
 import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
 import { podman } from "@ai-hero/sandcastle/sandboxes/podman";
 import { vercel } from "@ai-hero/sandcastle/sandboxes/vercel";
@@ -89,20 +90,22 @@ await run({
   prompt: "...",
 });
 
-// No-sandbox runs the agent directly on the host — interactive() only:
-await interactive({
-  agent: claudeCode("claude-opus-4-6"),
+// No-sandbox runs the agent directly on the host:
+await run({
+  agent: codexAppServer("gpt-5.4"),
   sandbox: noSandbox(),
-  prompt: "...", // optional — omit to launch the TUI with no initial prompt
-  cwd: "/path/to/other-repo", // optional — defaults to process.cwd()
+  branchStrategy: { type: "merge-to-head" },
+  prompt: "...",
 });
 ```
+
+`noSandbox()` is best for host-backed tools such as `codexAppServer()` that need to reuse local login state. It runs the agent directly in the host repo or worktree, so branch strategy becomes especially important for AFK runs.
 
 You can also [create your own provider](#custom-sandbox-providers) using `createBindMountSandboxProvider` or `createIsolatedSandboxProvider`.
 
 ## API
 
-Sandcastle exports a programmatic `run()` function for use in scripts, CI pipelines, or custom tooling. The examples below use `docker()`, but any `SandboxProvider` works in its place.
+Sandcastle exports a programmatic `run()` function for use in scripts, CI pipelines, or custom tooling. The examples below use `docker()`, but any sandbox provider accepted by `run()` works in its place.
 
 ```typescript
 import { run, claudeCode } from "@ai-hero/sandcastle";
@@ -131,7 +134,9 @@ const result = await run({
   // Optional second arg for provider-specific options like effort level.
   agent: claudeCode("claude-opus-4-6", { effort: "high" }),
 
-  // Sandbox provider — required. Any SandboxProvider works (docker, podman, vercel, or custom).
+  // Sandbox provider — required. Any provider accepted by run() works
+  // (docker, podman, vercel, noSandbox, or custom).
+  // createSandbox() still requires a real sandbox provider.
   // Provider-specific config (like imageName, mounts) lives inside the provider factory call.
   sandbox: docker({
     imageName: "sandcastle:local",
@@ -310,7 +315,7 @@ if (closeResult.preservedWorktreePath) {
 | Option           | Type            | Default         | Description                                                          |
 | ---------------- | --------------- | --------------- | -------------------------------------------------------------------- |
 | `branch`         | string          | —               | **Required.** Explicit branch for the sandbox                        |
-| `sandbox`        | SandboxProvider | —               | **Required.** Sandbox provider (e.g. `docker()`, `podman()`)         |
+| `sandbox`        | SandboxProvider | —               | **Required.** Real sandbox provider (e.g. `docker()`, `podman()`)    |
 | `cwd`            | string          | `process.cwd()` | Host repo directory — relative paths resolve against `process.cwd()` |
 | `hooks`          | SandboxHooks    | —               | Lifecycle hooks (`host.*`, `sandbox.*`) — run once at creation time  |
 | `copyToWorktree` | string[]        | —               | Host-relative file paths to copy into the sandbox at creation time   |
@@ -384,7 +389,7 @@ await wt.interactive({
   prompt: "Explore the codebase and understand the bug.",
 });
 
-// Run an AFK agent in the worktree (sandbox is required)
+// Run an AFK agent in the worktree
 const result = await wt.run({
   agent: claudeCode("claude-opus-4-6"),
   sandbox: docker({ imageName: "sandcastle:myrepo" }),
@@ -425,7 +430,7 @@ await sandbox.close();
 | ------------------------ | --------------------------------------------------------------------- | --------------------------------------------------- |
 | `branch`                 | string                                                                | The branch the worktree is on                       |
 | `worktreePath`           | string                                                                | Host path to the worktree                           |
-| `run(options)`           | `(options: WorktreeRunOptions) => Promise<WorktreeRunResult>`         | Run an AFK agent in the worktree (sandbox required) |
+| `run(options)`           | `(options: WorktreeRunOptions) => Promise<WorktreeRunResult>`         | Run an AFK agent in the worktree                    |
 | `interactive(options)`   | `(options: WorktreeInteractiveOptions) => Promise<InteractiveResult>` | Run an interactive agent session in the worktree    |
 | `createSandbox(options)` | `(options: WorktreeCreateSandboxOptions) => Promise<Sandbox>`         | Create a long-lived sandbox backed by this worktree |
 | `close()`                | `() => Promise<CloseResult>`                                          | Clean up the worktree (preserves if dirty)          |
@@ -450,7 +455,7 @@ await sandbox.close();
 | Option               | Type                   | Default | Description                                                                                                                         |
 | -------------------- | ---------------------- | ------- | ----------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`              | AgentProvider          | —       | **Required.** Agent provider                                                                                                        |
-| `sandbox`            | SandboxProvider        | —       | **Required.** Sandbox provider (AFK agents must be sandboxed)                                                                       |
+| `sandbox`            | AnySandboxProvider     | —       | **Required.** Sandbox provider for the run. Pass `noSandbox()` for host-backed execution.                                           |
 | `prompt`             | string                 | —       | Inline prompt (mutually exclusive with `promptFile`)                                                                                |
 | `promptFile`         | string                 | —       | Path to prompt file                                                                                                                 |
 | `maxIterations`      | number                 | 1       | Maximum iterations to run                                                                                                           |
@@ -708,7 +713,7 @@ Removes the Podman image.
 | Option               | Type               | Default                       | Description                                                                                                                                                     |
 | -------------------- | ------------------ | ----------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `agent`              | AgentProvider      | —                             | **Required.** Agent provider (e.g. `claudeCode("claude-opus-4-6")`, `pi("claude-sonnet-4-6")`, `codex("gpt-5.4-mini")`, `opencode("opencode/big-pickle")`)      |
-| `sandbox`            | SandboxProvider    | —                             | **Required.** Sandbox provider (e.g. `docker()`, `podman()`, `docker({ imageName: "sandcastle:local" })`)                                                       |
+| `sandbox`            | AnySandboxProvider | —                             | **Required.** Sandbox provider (e.g. `docker()`, `podman()`, `noSandbox()`, `docker({ imageName: "sandcastle:local" })`)                                        |
 | `cwd`                | string             | `process.cwd()`               | Host repo directory — anchor for `.sandcastle/` artifacts and git operations. Relative paths resolve against `process.cwd()`.                                   |
 | `prompt`             | string             | —                             | Inline prompt (mutually exclusive with `promptFile`)                                                                                                            |
 | `promptFile`         | string             | —                             | Path to prompt file (mutually exclusive with `prompt`). Resolves against `process.cwd()`, **not** `cwd`.                                                        |
@@ -809,6 +814,50 @@ agent: codex("gpt-5.4", { effort: "high" });
 | -------- | ---------------------------------------------- | ------- | --------------------------------------------------------- |
 | `effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` | —       | Codex reasoning effort level via `model_reasoning_effort` |
 | `env`    | `Record<string, string>`                       | `{}`    | Environment variables injected by this agent provider     |
+
+When running Codex inside Docker or Podman, you can reuse credentials created on the host by `codex login`:
+
+```typescript
+import { run, codex, codexCliMounts } from "@ai-hero/sandcastle";
+import { docker } from "@ai-hero/sandcastle/sandboxes/docker";
+
+await run({
+  agent: codex("gpt-5.4"),
+  sandbox: docker({
+    mounts: codexCliMounts(),
+  }),
+  prompt: "Fix the failing tests in this repo",
+});
+```
+
+`codexCliMounts()` mounts any existing host `~/.codex/auth.json`, `~/.codex/config.toml`, and `~/.codex/config.json` files into `/home/agent/.codex` as read-only files inside the sandbox.
+
+### `CodexAppServerOptions`
+
+The `codexAppServer()` factory talks to `codex app-server` on the host instead of launching `codex exec` inside a sandbox. This is the right fit when you want a host-backed harness that reuses the local Codex login session, including ChatGPT-plan access exposed through `codex login`.
+
+```typescript
+import { run, codexAppServer } from "@ai-hero/sandcastle";
+import { noSandbox } from "@ai-hero/sandcastle/sandboxes/no-sandbox";
+
+await run({
+  agent: codexAppServer("gpt-5.4", { effort: "high" }),
+  sandbox: noSandbox(),
+  branchStrategy: { type: "merge-to-head" },
+  prompt: "Fix the failing tests in this repo",
+});
+```
+
+| Option   | Type                                           | Default | Description                                                      |
+| -------- | ---------------------------------------------- | ------- | ---------------------------------------------------------------- |
+| `effort` | `"low"` \| `"medium"` \| `"high"` \| `"xhigh"` | —       | Codex reasoning effort passed through to `codex app-server`      |
+| `env`    | `Record<string, string>`                       | `{}`    | Environment variables injected into the host-backed agent launch |
+
+Notes:
+
+- `codexAppServer()` is intended for `run()` and `wt.run()` with `noSandbox()`.
+- It requires a working host-side Codex install and an active `codex login` session.
+- `createSandbox()` still requires a real sandbox provider, so `codexAppServer()` does not replace Docker/Podman/Vercel for reusable sandbox handles.
 
 ### Provider `env`
 

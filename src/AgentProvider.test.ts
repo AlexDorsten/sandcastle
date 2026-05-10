@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { claudeCode, codex, opencode, pi } from "./AgentProvider.js";
+import {
+  claudeCode,
+  codex,
+  codexAppServer,
+  opencode,
+  pi,
+} from "./AgentProvider.js";
 import type { AgentCommandOptions } from "./AgentProvider.js";
 
 /** Shorthand: build options with dangerouslySkipPermissions: true (mirrors existing sandbox callers). */
@@ -677,13 +683,77 @@ describe("codex factory", () => {
   });
 
   it("accepts an env option and exposes it on the provider", () => {
-    const provider = codex("gpt-5.4-mini", { env: { OPENAI_KEY: "xyz" } });
-    expect(provider.env).toEqual({ OPENAI_KEY: "xyz" });
+    const provider = codex("gpt-5.4-mini", {
+      env: { OPENAI_API_KEY: "xyz" },
+    });
+    expect(provider.env).toEqual({ OPENAI_API_KEY: "xyz" });
   });
 
   it("defaults env to empty object when not provided", () => {
     const provider = codex("gpt-5.4-mini");
     expect(provider.env).toEqual({});
+  });
+
+  it("parseStreamLine extracts Codex app-server text deltas", () => {
+    const provider = codex("gpt-5.4-mini");
+    const line = JSON.stringify({
+      type: "codex_app_server.text_delta",
+      text: "Hello from delta",
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "text", text: "Hello from delta" },
+    ]);
+  });
+
+  it("parseStreamLine extracts Codex app-server final results", () => {
+    const provider = codex("gpt-5.4-mini");
+    const line = JSON.stringify({
+      type: "codex_app_server.result",
+      result: "Final app-server answer",
+    });
+    expect(provider.parseStreamLine(line)).toEqual([
+      { type: "result", result: "Final app-server answer" },
+    ]);
+  });
+});
+
+describe("codexAppServer factory", () => {
+  it("returns a provider with name 'codex-app-server'", () => {
+    const provider = codexAppServer("gpt-5.4-mini");
+    expect(provider.name).toBe("codex-app-server");
+  });
+
+  it("buildPrintCommand uses the bridge script and sends prompt via stdin", () => {
+    const provider = codexAppServer("gpt-5.4-mini");
+    const { command, stdin } = provider.buildPrintCommand(opts("use stdin"));
+    expect(
+      command.includes(process.execPath) ||
+        command.includes("node_modules/.bin/tsx"),
+    ).toBe(true);
+    expect(
+      command.includes("codexAppServerBridge.js") ||
+        command.includes("codexAppServerBridge.ts"),
+    ).toBe(true);
+    expect(command).toContain("--model 'gpt-5.4-mini'");
+    expect(stdin).toBe("use stdin");
+  });
+
+  it("buildPrintCommand includes effort when specified", () => {
+    const provider = codexAppServer("gpt-5.4-mini", { effort: "xhigh" });
+    const { command } = provider.buildPrintCommand(opts("test"));
+    expect(command).toContain("--effort 'xhigh'");
+  });
+
+  it("reuses the Codex parser for bridge events", () => {
+    const provider = codexAppServer("gpt-5.4-mini");
+    expect(
+      provider.parseStreamLine(
+        JSON.stringify({
+          type: "codex_app_server.text_delta",
+          text: "delta",
+        }),
+      ),
+    ).toEqual([{ type: "text", text: "delta" }]);
   });
 });
 
@@ -759,7 +829,9 @@ describe("opencode factory", () => {
   });
 
   it("buildPrintCommand shell-escapes the variant value", () => {
-    const provider = opencode("opencode/big-pickle", { variant: "it's tricky" });
+    const provider = opencode("opencode/big-pickle", {
+      variant: "it's tricky",
+    });
     const { command } = provider.buildPrintCommand(opts("test"));
     expect(command).toContain("--variant 'it'\\''s tricky'");
   });
